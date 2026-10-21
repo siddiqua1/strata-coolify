@@ -42,11 +42,12 @@ services:
       disable: true
     environment:
       API_KEY: ${API_KEY:?set API_KEY}
-      FAMILY: ${FAMILY:-coder}
-      MODEL: ${MODEL:-IQ1_M}
+      FAMILY: ${FAMILY:-qwen}
+      MODEL: ${MODEL:-IQ2_XS}
       KV: ${KV:-k8v4}
       KV_STREAMING: ${KV_STREAMING:-on}
       CONTEXT: ${CONTEXT:-204800}
+      LOW_RAM: ${LOW_RAM:-resident}
       IDLE_UNLOAD_S: ${IDLE_UNLOAD_S:-1800}
       LAZY_LOAD: ${LAZY_LOAD:-true}
       VRAM_RESERVE_MIB: ${VRAM_RESERVE_MIB:-3072}

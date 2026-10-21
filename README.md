@@ -1,8 +1,8 @@
 # Strata on Coolify
 
-Runs [Strata](https://github.com/Niko1221/Strata) (Qwen3.8-Flash-Next **Coder**,
-`IQ1_M`) on an AMD RX 7900 XT (`gfx1100`) as a Coolify Docker Compose resource,
-sharing the card with Jellyfin.
+Runs [Strata](https://github.com/Niko1221/Strata) (Qwen3.8-Flash-Next, the full
+model at `IQ2_XS`) on an AMD RX 7900 XT (`gfx1100`) as a Coolify Docker Compose
+resource, sharing the card with Jellyfin.
 
 Pinned to Strata `296b59d2f73c8f04a805df29c2fa97655adace78` (v0.1.44.1) and to
 `rocm/dev-ubuntu-24.04:7.2.4-complete`, which matches the host's ROCm 7.2.4.
@@ -11,9 +11,9 @@ The HIP engine is compiled at image build time by `setup.py`'s own
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| `FAMILY` / `MODEL` | `coder` / `IQ1_M` | 23.4 GB of experts, 58.4 GB download |
+| `FAMILY` / `MODEL` | `qwen` / `IQ2_XS` | all 512 experts, 35.5 GB of experts, 68 GB download |
 | `CONTEXT` / `KV` | `204800` / `k8v4` | 200K, inside the trained 262144 (no rope scaling); KV streamed to RAM (~2.2 GB) |
-| `LOW_RAM` | `off` | all experts resident in RAM (48 GB host) |
+| `LOW_RAM` | `resident` | the experts the GPU does not hold are copied into RAM; 46 GB is not enough to lock all 35.5 GB |
 | `LAZY_LOAD` / `IDLE_UNLOAD_S` | `true` / `1800` | API answers at boot; model unloads after 30 idle minutes |
 | `VRAM_RESERVE_MIB` | `3072` | VRAM left for Jellyfin's VAAPI transcodes |
 
