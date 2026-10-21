@@ -89,15 +89,18 @@ A request's own `temperature`/`top_p`/... still wins; the thinking budget and
 loop recovery always apply. Change the defaults with the matching environment
 variables (above) and restart.
 
-**Quality ceiling:** IQ1_M writes correct code for straightforward tasks
-(verified: merge two sorted `Vec<i32>`, reverse a string), but it cannot write
-correct `macro_rules!` or proc-macro Rust and invents syntax like `macro!`.
-That is the quant, not the settings; a bigger model is the only real fix.
+**Quality, measured:** on IQ2_XS the simple code tasks compile (verified with
+`rustc`: merging two sorted `Vec<i32>`, and the LRU struct itself). The
+macro-in-one-file task still does not compile after two samples: the first
+failed on macro type-repetition syntax, the second on a real borrow-checker
+error (`RefCell`-based `LruCache`). That is the 2-bit quant's ceiling, not the
+settings; 2 bits buys correct shapes and idioms, not a compiling attribute
+macro.
 
 ## Operating
 
-- **Data** lives at `/home/ash/strata` on the host (62 GB after the first
-  start): model files, MTP layer, config. Backing it up is optional; a rebuild
+- **Data** lives at `/home/ash/strata` on the host (104 GB for IQ2_XS after
+  the first start: 68 GB download, ~31 GB expert pack, ~5 GB MTP): model files, MTP layer, config. Backing it up is optional; a rebuild
   re-downloads. Coolify resolves the volume path when the resource's compose is
   saved, so to move it, edit the `volumes:` entry in the compose file (Coolify's
   Compose tab) and redeploy, not just the `STRATA_DATA_PATH` variable.
@@ -122,8 +125,8 @@ That is the quant, not the settings; a bigger model is the only real fix.
 - The model's 28.8 GB n-gram (PLE) table is read with `O_DIRECT`, bypassing page
   cache, so it does not count against `mem_limit`. It needs a fast NVMe: a
   spinning disk stalls prompts.
-- The first build pulls ~7.4 GB and leaves a 22.4 GB image; model + image need
-  roughly 100 GB, hence the NVMe data directory.
+- The first build pulls ~7.4 GB and leaves a 22.4 GB image; model, pack and
+  image need roughly 130 GB, hence the NVMe data directory.
 - Unverified: a cold 200K-token prompt has not been timed (estimated 2–3 min).
   If ROCm reports permission errors on `/dev/kfd`, add
   `security_opt: [seccomp=unconfined]` to the service.
@@ -132,11 +135,13 @@ That is the quant, not the settings; a bigger model is the only real fix.
 
 - Image build: ~5 min including the 7.4 GB base pull; the HIP engine itself
   compiles in about a minute.
-- First start: 58.4 GB download plus packing the MTP layer. The model is
-  reusable across container recreations; later starts skip setup entirely.
-- Model load: 23.42 GiB of experts at 3.3–3.7 GiB/s (12–15 s).
-- Memory: 27 GiB RSS against the 32 GiB limit; 17.3 GiB of 20 GiB VRAM used, so
-  the 3072 MiB reserve for Jellyfin is honoured.
-- Decode: 47.7 tok/s over a 32-token answer with speculative decoding, expert
-  cache 80.9% hit.
-- Restart with the model unloaded: `/health` answers in about 3 s.
+- First start: 68 GB download, ~31 GB expert pack and ~5 GB MTP layer (104 GB
+  in the data directory). Reusable across container recreations; later starts
+  skip setup entirely.
+- Model load: 39 GB arena, the experts the GPU does not hold copied into RAM;
+  ~11 s when the files are in page cache, longer after a cold boot.
+- Memory: 26–28 GiB against the 32 GiB limit; 17.3 GiB of 20 GiB VRAM used with
+  11.77 GiB of expert cache, so the 3072 MiB reserve for Jellyfin is honoured.
+- Decode: 62.4 tok/s over a 2,865-token answer with speculative decoding,
+  expert cache 91.2% hit.
+- Restart with the model unloaded: `/health` answers in about 2 s.
