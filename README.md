@@ -26,7 +26,10 @@ The HIP engine is compiled at image build time by `setup.py`'s own
    as a secret). Optional overrides: `STRATA_DATA_PATH` (default
    `/home/ash/strata`), `VIDEO_GID` (985), `RENDER_GID` (989), `FAMILY`,
    `MODEL`, `CONTEXT`, `KV`, `KV_STREAMING`, `IDLE_UNLOAD_S`, `LAZY_LOAD`,
-   `VRAM_RESERVE_MIB`, `ROCM_TAG`, `STRATA_REF`.
+   `VRAM_RESERVE_MIB`, `SAMPLING_TEMPERATURE`, `SAMPLING_TOP_P`,
+   `SAMPLING_TOP_K`, `SAMPLING_MIN_P`, `REPETITION_PENALTY`, `PENALTY_LAST_N`,
+   `REASONING_BUDGET_TOKENS`, `REASONING_LOOP_RECOVERY`, `ROCM_TAG`,
+   `STRATA_REF`.
 3. **Domains**: add `http://strata.ash-siddiqui.com` to service `strata`, port
    `8080`. Coolify generates the Traefik router, service and container labels
    from that domain and attaches the service to its own network, to which it
@@ -63,6 +66,30 @@ curl -X POST -H "Authorization: Bearer $STRATA_KEY" \
 - Anthropic-compatible: `https://strata.ash-siddiqui.com/v1/messages`
   (Claude Code: `ANTHROPIC_BASE_URL=https://strata.ash-siddiqui.com`)
 - Health: `GET /health` (200 whether or not the model is loaded)
+
+## Decoding defaults, and why
+
+`setup.py` writes no `sampling` block, and a request that sends no temperature
+then decodes **greedy**. On this 1-bit Coder a hard prompt (macro-heavy Rust,
+for example) falls into a loop inside its thinking: it spends the whole token
+budget there and returns no answer at all. `strata-wrapper.sh` therefore writes:
+
+| Key | Value | Effect |
+| --- | --- | --- |
+| `sampling.temperature` | `0.3` | sampled instead of greedy |
+| `sampling.top_p` / `top_k` / `min_p` | `0.95` / `40` / `0.02` | keeps code tokens plausible |
+| `sampling.repetition_penalty` / `penalty_last_n` | `1.03` / `256` | mild, over a long window |
+| `reasoning_budget_tokens` | `2048` | closes the thinking and starts the answer |
+| `reasoning_loop_recovery` | `recover` | interrupts reasoning that repeats whole passages |
+
+A request's own `temperature`/`top_p`/... still wins; the thinking budget and
+loop recovery always apply. Change the defaults with the matching environment
+variables (above) and restart.
+
+**Quality ceiling:** IQ1_M writes correct code for straightforward tasks
+(verified: merge two sorted `Vec<i32>`, reverse a string), but it cannot write
+correct `macro_rules!` or proc-macro Rust and invents syntax like `macro!`.
+That is the quant, not the settings; a bigger model is the only real fix.
 
 ## Operating
 

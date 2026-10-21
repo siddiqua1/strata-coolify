@@ -6,6 +6,12 @@
 #   VRAM_RESERVE_MIB  -> "--vram-reserve-mib" in "args" (VRAM left for Jellyfin)
 #   API_KEY           -> "api_key"
 #
+# It also sets decoding defaults, because the config written by setup has no
+# "sampling" block: a request that sends no temperature then decodes greedy,
+# and this 1-bit Coder loops in its thinking on hard prompts and answers
+# nothing. A "sampling" block, a thinking budget and the reasoning-loop
+# recovery keep requests that send no sampling fields usable.
+#
 # The config is patched on every start, so a changed env var in Coolify takes
 # effect on the next restart. setup.py rewrites the config on a reinstall and
 # drops hand-added "args"; patching here means nothing is lost when it does.
@@ -25,6 +31,14 @@ IDLE_UNLOAD_S="${IDLE_UNLOAD_S:-1800}"
 LAZY_LOAD="${LAZY_LOAD:-true}"
 VRAM_RESERVE_MIB="${VRAM_RESERVE_MIB:-3072}"
 API_KEY="${API_KEY:-}"
+SAMPLING_TEMPERATURE="${SAMPLING_TEMPERATURE:-0.3}"
+SAMPLING_TOP_P="${SAMPLING_TOP_P:-0.95}"
+SAMPLING_TOP_K="${SAMPLING_TOP_K:-40}"
+SAMPLING_MIN_P="${SAMPLING_MIN_P:-0.02}"
+REPETITION_PENALTY="${REPETITION_PENALTY:-1.03}"
+PENALTY_LAST_N="${PENALTY_LAST_N:-256}"
+REASONING_BUDGET_TOKENS="${REASONING_BUDGET_TOKENS:-2048}"
+REASONING_LOOP_RECOVERY="${REASONING_LOOP_RECOVERY:-recover}"
 
 die() { echo "strata-wrapper: $*" >&2; exit 1; }
 
@@ -36,6 +50,14 @@ case "$VRAM_RESERVE_MIB" in ''|*[!0-9]*) die "VRAM_RESERVE_MIB must be a whole n
 case "$LAZY_LOAD" in true|false) ;; *) die "LAZY_LOAD must be true or false" ;; esac
 case "$KV" in int8|q4_0|k8v4) ;; *) die "KV must be int8, q4_0 or k8v4" ;; esac
 case "$KV_STREAMING" in auto|on|off) ;; *) die "KV_STREAMING must be auto, on or off" ;; esac
+case "$REASONING_LOOP_RECOVERY" in false|stop|recover) ;;
+  *) die "REASONING_LOOP_RECOVERY must be false, stop or recover" ;; esac
+for v in "$SAMPLING_TEMPERATURE" "$SAMPLING_TOP_P" "$SAMPLING_MIN_P" "$REPETITION_PENALTY"; do
+  case "$v" in ''|*[!0-9.]*) die "SAMPLING_TEMPERATURE, SAMPLING_TOP_P, SAMPLING_MIN_P and REPETITION_PENALTY must be numbers (got '$v')" ;; esac
+done
+for v in "$SAMPLING_TOP_K" "$PENALTY_LAST_N" "$REASONING_BUDGET_TOKENS"; do
+  case "$v" in ''|*[!0-9]*) die "SAMPLING_TOP_K, PENALTY_LAST_N and REASONING_BUDGET_TOKENS must be whole numbers (got '$v')" ;; esac
+done
 
 # Same naming as docker-entrypoint.sh: the qwen family has no prefix.
 case "$FAMILY" in qwen) prefix="" ;; *) prefix="${FAMILY}-" ;; esac
@@ -63,10 +85,23 @@ tmp="$cfg.tmp.$$"
 jq --argjson idle "$IDLE_UNLOAD_S" \
    --argjson lazy "$LAZY_LOAD" \
    --arg vram "$VRAM_RESERVE_MIB" \
-   --arg key "$API_KEY" '
+   --arg key "$API_KEY" \
+   --argjson temp "$SAMPLING_TEMPERATURE" \
+   --argjson topp "$SAMPLING_TOP_P" \
+   --argjson topk "$SAMPLING_TOP_K" \
+   --argjson minp "$SAMPLING_MIN_P" \
+   --argjson rpen "$REPETITION_PENALTY" \
+   --argjson plast "$PENALTY_LAST_N" \
+   --argjson budget "$REASONING_BUDGET_TOKENS" \
+   --arg loop "$REASONING_LOOP_RECOVERY" '
   .idle_unload_s = $idle
   | .lazy_load = $lazy
   | .api_key = $key
+  | .sampling = ((.sampling // {})
+      + {temperature: $temp, top_p: $topp, top_k: $topk, min_p: $minp,
+         repetition_penalty: $rpen, penalty_last_n: $plast})
+  | .reasoning_budget_tokens = $budget
+  | .reasoning_loop_recovery = $loop
   | .args = ((.args // []) as $a
       | [range(0; $a | length) as $i
          | select($a[$i] != "--vram-reserve-mib"
@@ -76,6 +111,8 @@ jq --argjson idle "$IDLE_UNLOAD_S" \
 ' "$cfg" > "$tmp" || { rm -f "$tmp"; die "could not patch $cfg"; }
 mv -f "$tmp" "$cfg"
 echo "strata-wrapper: idle_unload_s=$IDLE_UNLOAD_S lazy_load=$LAZY_LOAD vram_reserve_mib=$VRAM_RESERVE_MIB"
+echo "strata-wrapper: sampling temp=$SAMPLING_TEMPERATURE top_p=$SAMPLING_TOP_P top_k=$SAMPLING_TOP_K min_p=$SAMPLING_MIN_P repetition_penalty=$REPETITION_PENALTY penalty_last_n=$PENALTY_LAST_N"
+echo "strata-wrapper: reasoning_budget_tokens=$REASONING_BUDGET_TOKENS reasoning_loop_recovery=$REASONING_LOOP_RECOVERY"
 
 # Setup is done, so the upstream entrypoint links the patched config and starts
 # the server without a second setup pass.
