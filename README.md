@@ -30,7 +30,7 @@ The HIP engine is compiled at image build time by `setup.py`'s own
    `SAMPLING_TOP_K`, `SAMPLING_MIN_P`, `REPETITION_PENALTY`, `PENALTY_LAST_N`,
    `REASONING_BUDGET_TOKENS`, `REASONING_LOOP_RECOVERY`, `ROCM_TAG`,
    `STRATA_REF`.
-3. **Domains**: add `http://strata.ash-siddiqui.com` to service `strata`, port
+3. **Domains**: add `http://strata.example.com` to service `strata`, port
    `8080`. Coolify generates the Traefik router, service and container labels
    from that domain and attaches the service to its own network, to which it
    also connects `coolify-proxy`. The compose file carries no Traefik labels or
@@ -38,8 +38,8 @@ The HIP engine is compiled at image build time by `setup.py`'s own
 4. **Deploy.** The first build compiles the engine (10–20 min); the first start
    downloads ~58 GB and then serves.
 
-`strata.ash-siddiqui.com` already resolves to the Cloudflare tunnel
-(`*.ash-siddiqui.com` → `http://localhost:80` → Traefik). Cloudflare terminates
+`strata.example.com` already resolves to the Cloudflare tunnel
+(`*.example.com` → `http://localhost:80` → Traefik). Cloudflare terminates
 TLS, so Traefik only needs the `http` entrypoint.
 
 **There is deliberately no `ipAllowList`.** Tunnel traffic reaches Traefik from
@@ -48,8 +48,10 @@ Access control is the API key; add a Cloudflare Access policy if you want a
 second gate.
 
 **LAN access** without going through Cloudflare: point
-`strata.ash-siddiqui.com` at `192.168.50.210` in the LAN DNS or `/etc/hosts`,
-and use `http://` (port 80). The same router serves both paths.
+`strata.example.com` at `192.168.1.10` in the LAN DNS or `/etc/hosts`,
+and use `http://` (port 80). The same router serves both paths. That path is
+plain HTTP, so the bearer key crosses the LAN unencrypted; use the Cloudflare
+route on networks you do not control.
 
 ## Using it
 
@@ -59,12 +61,12 @@ is read at 2–3 min cold on this card class). Warm the model before a session:
 ```sh
 curl -X POST -H "Authorization: Bearer $STRATA_KEY" \
      -H "Content-Type: application/json" -d '{}' \
-     https://strata.ash-siddiqui.com/v1/load
+     https://strata.example.com/v1/load
 ```
 
-- OpenAI-compatible: `https://strata.ash-siddiqui.com/v1`
-- Anthropic-compatible: `https://strata.ash-siddiqui.com/v1/messages`
-  (Claude Code: `ANTHROPIC_BASE_URL=https://strata.ash-siddiqui.com`)
+- OpenAI-compatible: `https://strata.example.com/v1`
+- Anthropic-compatible: `https://strata.example.com/v1/messages`
+  (Claude Code: `ANTHROPIC_BASE_URL=https://strata.example.com`)
 - Health: `GET /health` (200 whether or not the model is loaded)
 
 ## Decoding defaults, and why

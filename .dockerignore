@@ -5,3 +5,10 @@ PLAN.md
 README.md
 *.md
 .env
+.env.*
+*.key
+*.token
+*.pem
+*.log
+config
+docker-config

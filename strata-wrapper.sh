@@ -81,6 +81,8 @@ if [ "${REINSTALL:-0}" = "1" ] || [ ! -f "$cfg" ]; then
   [ -f "$cfg" ] || die "setup finished without writing $cfg"
 fi
 
+# The patched config holds the API key: create it private.
+umask 077
 tmp="$cfg.tmp.$$"
 jq --argjson idle "$IDLE_UNLOAD_S" \
    --argjson lazy "$LAZY_LOAD" \
@@ -110,6 +112,7 @@ jq --argjson idle "$IDLE_UNLOAD_S" \
       + ["--vram-reserve-mib", $vram])
 ' "$cfg" > "$tmp" || { rm -f "$tmp"; die "could not patch $cfg"; }
 mv -f "$tmp" "$cfg"
+chmod 600 "$cfg"
 echo "strata-wrapper: idle_unload_s=$IDLE_UNLOAD_S lazy_load=$LAZY_LOAD vram_reserve_mib=$VRAM_RESERVE_MIB"
 echo "strata-wrapper: sampling temp=$SAMPLING_TEMPERATURE top_p=$SAMPLING_TOP_P top_k=$SAMPLING_TOP_K min_p=$SAMPLING_MIN_P repetition_penalty=$REPETITION_PENALTY penalty_last_n=$PENALTY_LAST_N"
 echo "strata-wrapper: reasoning_budget_tokens=$REASONING_BUDGET_TOKENS reasoning_loop_recovery=$REASONING_LOOP_RECOVERY"

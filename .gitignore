@@ -1,2 +1,11 @@
 .scratch/
 .env
+.env.*
+!.env.example
+*.key
+*.token
+*.pem
+*.log
+config/
+strata-*.json
+docker-config/
