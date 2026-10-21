@@ -81,6 +81,11 @@ curl -X POST -H "Authorization: Bearer $STRATA_KEY" \
 
 - `mem_limit: 32g` is a backstop, not a measured number. After a real coding
   session, compare `docker stats` and lower it to footprint + margin.
+- The service disables the image's Docker healthcheck (`healthcheck: disable`).
+  Traefik only routes containers that are healthy or have no healthcheck, and
+  the first start spends about an hour downloading with nothing listening on
+  :8080 yet. Use `GET /health` (200 as soon as the server is up, loaded or not)
+  to know when it is ready.
 - The model's 28.8 GB n-gram (PLE) table is read with `O_DIRECT`, bypassing page
   cache, so it does not count against `mem_limit`. It needs a fast NVMe: a
   spinning disk stalls prompts.

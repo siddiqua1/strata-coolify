@@ -33,6 +33,13 @@ services:
     mem_limit: 32g
     # Half the default weight: Jellyfin wins when the CPU is contended.
     cpu_shares: 512
+    # The image's healthcheck probes :8080, which does not answer until the
+    # first start has downloaded the model (~58 GB, about an hour). Traefik
+    # skips containers that are "starting" or "unhealthy", so the route would
+    # not exist during that first download. The server's own GET /health is
+    # still there for clients and monitoring.
+    healthcheck:
+      disable: true
     environment:
       API_KEY: ${API_KEY:?set API_KEY}
       FAMILY: ${FAMILY:-coder}
