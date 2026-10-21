@@ -1,7 +1,7 @@
 # Strata on Coolify (Docker Compose build pack), next to Jellyfin on the same
 # RX 7900 XT. Set the required variables in Coolify's environment tab; API_KEY
 # as a secret. The domain is set on the service in Coolify's Domains tab (port
-# 8080); the Traefik label below reads it back as SERVICE_FQDN_STRATA.
+# 8080); Coolify adds the Traefik router and network itself.
 services:
   strata:
     build:
