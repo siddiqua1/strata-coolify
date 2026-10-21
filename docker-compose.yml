@@ -43,7 +43,7 @@ services:
     environment:
       API_KEY: ${API_KEY:?set API_KEY}
       FAMILY: ${FAMILY:-qwen}
-      MODEL: ${MODEL:-IQ2_XS}
+      MODEL: ${MODEL:-IQ3_XXS}
       KV: ${KV:-k8v4}
       KV_STREAMING: ${KV_STREAMING:-on}
       CONTEXT: ${CONTEXT:-204800}

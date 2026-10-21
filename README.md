@@ -1,7 +1,7 @@
 # Strata on Coolify
 
 Runs [Strata](https://github.com/Niko1221/Strata) (Qwen3.8-Flash-Next, the full
-model at `IQ2_XS`) on an AMD RX 7900 XT (`gfx1100`) as a Coolify Docker Compose
+model at `IQ3_XXS`) on an AMD RX 7900 XT (`gfx1100`) as a Coolify Docker Compose
 resource, sharing the card with Jellyfin.
 
 Pinned to Strata `296b59d2f73c8f04a805df29c2fa97655adace78` (v0.1.44.1) and to
@@ -11,9 +11,9 @@ The HIP engine is compiled at image build time by `setup.py`'s own
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| `FAMILY` / `MODEL` | `qwen` / `IQ2_XS` | all 512 experts, 35.5 GB of experts, 68 GB download |
+| `FAMILY` / `MODEL` | `qwen` / `IQ3_XXS` | all 512 experts, 42.9 GB of experts, 76 GB download |
 | `CONTEXT` / `KV` | `204800` / `k8v4` | 200K, inside the trained 262144 (no rope scaling); KV streamed to RAM (~2.2 GB) |
-| `LOW_RAM` | `resident` | the experts the GPU does not hold are copied into RAM; 46 GB is not enough to lock all 35.5 GB |
+| `LOW_RAM` | `resident` | the experts the GPU does not hold are copied into RAM; 46 GB is not enough to lock all 42.9 GB |
 | `LAZY_LOAD` / `IDLE_UNLOAD_S` | `true` / `1800` | API answers at boot; model unloads after 30 idle minutes |
 | `VRAM_RESERVE_MIB` | `3072` | VRAM left for Jellyfin's VAAPI transcodes |
 
@@ -75,7 +75,7 @@ curl -X POST -H "Authorization: Bearer $STRATA_KEY" \
 then decodes **greedy**. On a low-bit model a hard prompt (macro-heavy Rust,
 for example) falls into a loop inside its thinking: it spends the whole token
 budget there and returns no answer at all. This was measured on the Coder
-`IQ1_M` the box ran first, and the defaults are kept for `IQ2_XS`. `strata-wrapper.sh` therefore writes:
+`IQ1_M` the box ran first, and the defaults are kept for `IQ3_XXS`. `strata-wrapper.sh` therefore writes:
 
 | Key | Value | Effect |
 | --- | --- | --- |
@@ -89,19 +89,21 @@ A request's own `temperature`/`top_p`/... still wins; the thinking budget and
 loop recovery always apply. Change the defaults with the matching environment
 variables (above) and restart.
 
-**Quality, measured:** on IQ2_XS the simple code tasks compile (verified with
+**Quality, measured:** on IQ3_XXS the simple code tasks compile (verified with
 `rustc`: merging two sorted `Vec<i32>`, and the LRU struct itself). The
-macro-in-one-file task still does not compile after two samples: the first
-failed on macro type-repetition syntax, the second on a real borrow-checker
-error (`RefCell`-based `LruCache`). That is the 2-bit quant's ceiling, not the
-settings; 2 bits buys correct shapes and idioms, not a compiling attribute
-macro.
+macro-in-one-file task compiles **2 times in 10** — the passing samples are a
+real `macro_rules!` decorator over a `thread_local! RefCell<LruCache<K,V>>` with
+tests. The failures are one-error slips (macro fragment rules, a borrow-checker
+error, doc-comment placement). IQ2_XS, the 2-bit step below, compiled 1 in 5 on
+the same prompt, so 3 bits buys idiom and speed, not reliability: treat this
+task as retry-until-it-compiles, and 4-bit (~93% quant agreement) as the next
+real step.
 
 ## Operating
 
-- **Data** lives at `/home/ash/strata` on the host (104 GB for IQ2_XS after
-  the first start: 68 GB download, ~31 GB expert pack, ~5 GB MTP): model files, MTP layer, config. Backing it up is optional; a rebuild
-  re-downloads. Coolify resolves the volume path when the resource's compose is
+- **Data** lives at `/home/ash/strata` on the host (118 GB for IQ3_XXS after
+  the first start: 76 GB download, ~41 GB expert pack, ~6 GB MTP: model files,
+  MTP layer, config). Backing it up is optional; a rebuild re-downloads. Coolify resolves the volume path when the resource's compose is
   saved, so to move it, edit the `volumes:` entry in the compose file (Coolify's
   Compose tab) and redeploy, not just the `STRATA_DATA_PATH` variable.
 - **Change model settings** (context, KV, family/model): set `REINSTALL=1` in
@@ -115,18 +117,18 @@ macro.
 
 ## Notes and known limits
 
-- `mem_limit: 32g` is a backstop, not a measured number. After a real coding
-  session, compare `docker stats` and lower it to footprint + margin.
+- `mem_limit: 38g` is a backstop: the measured footprint is 34.1 GiB. After a
+  real coding session, compare `docker stats` and tighten it to footprint + margin.
 - The service disables the image's Docker healthcheck (`healthcheck: disable`).
   Traefik only routes containers that are healthy or have no healthcheck, and
-  the first start spends about an hour downloading with nothing listening on
+  the first start spends about half an hour downloading with nothing listening on
   :8080 yet. Use `GET /health` (200 as soon as the server is up, loaded or not)
   to know when it is ready.
 - The model's 28.8 GB n-gram (PLE) table is read with `O_DIRECT`, bypassing page
   cache, so it does not count against `mem_limit`. It needs a fast NVMe: a
   spinning disk stalls prompts.
 - The first build pulls ~7.4 GB and leaves a 22.4 GB image; model, pack and
-  image need roughly 130 GB, hence the NVMe data directory.
+  image need roughly 145 GB, hence the NVMe data directory.
 - Unverified: a cold 200K-token prompt has not been timed (estimated 2–3 min).
   If ROCm reports permission errors on `/dev/kfd`, add
   `security_opt: [seccomp=unconfined]` to the service.
@@ -135,13 +137,13 @@ macro.
 
 - Image build: ~5 min including the 7.4 GB base pull; the HIP engine itself
   compiles in about a minute.
-- First start: 68 GB download, ~31 GB expert pack and ~5 GB MTP layer (104 GB
+- First start: 76 GB download, ~41 GB expert pack and ~6 GB MTP layer (118 GB
   in the data directory). Reusable across container recreations; later starts
   skip setup entirely.
-- Model load: 39 GB arena, the experts the GPU does not hold copied into RAM;
-  ~11 s when the files are in page cache, longer after a cold boot.
-- Memory: 26–28 GiB against the 32 GiB limit; 17.3 GiB of 20 GiB VRAM used with
-  11.77 GiB of expert cache, so the 3072 MiB reserve for Jellyfin is honoured.
-- Decode: 62.4 tok/s over a 2,865-token answer with speculative decoding,
-  expert cache 91.2% hit.
+- Model load: 42.9 GB arena, the experts the GPU does not hold copied into RAM;
+  ~15 s when the files are in page cache, longer after a cold boot.
+- Memory: 34.1 GiB against the 38 GiB limit; 17.3 GiB of 20 GiB VRAM used, so
+  the 3072 MiB reserve for Jellyfin is honoured.
+- Decode: 69.3 tok/s over a 3,271-token answer with speculative decoding,
+  expert cache 84.1% hit.
 - Restart with the model unloaded: `/health` answers in about 2 s.
