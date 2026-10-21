@@ -28,9 +28,10 @@ The HIP engine is compiled at image build time by `setup.py`'s own
    `MODEL`, `CONTEXT`, `KV`, `KV_STREAMING`, `IDLE_UNLOAD_S`, `LAZY_LOAD`,
    `VRAM_RESERVE_MIB`, `ROCM_TAG`, `STRATA_REF`.
 3. **Domains**: add `http://strata.ash-siddiqui.com` to service `strata`, port
-   `8080`. Coolify generates the Traefik router and service for that domain;
-   `docker-compose.yml` only pins `traefik.docker.network=coolify` so Traefik
-   knows which of the container's two networks to use.
+   `8080`. Coolify generates the Traefik router, service and container labels
+   from that domain and attaches the service to its own network, to which it
+   also connects `coolify-proxy`. The compose file carries no Traefik labels or
+   networks.
 4. **Deploy.** The first build compiles the engine (10–20 min); the first start
    downloads ~58 GB and then serves.
 
