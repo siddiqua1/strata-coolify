@@ -25,7 +25,7 @@ The HIP engine is compiled at image build time by `setup.py`'s own
 2. **Environment Variables**: at minimum `API_KEY` (long random value, marked
    as a secret). Optional overrides: `STRATA_DATA_PATH` (default
    `/home/ash/strata`), `VIDEO_GID` (985), `RENDER_GID` (989), `FAMILY`,
-   `MODEL`, `CONTEXT`, `KV`, `KV_STREAMING`, `IDLE_UNLOAD_S`, `LAZY_LOAD`,
+   `MODEL`, `LOW_RAM`, `CONTEXT`, `KV`, `KV_STREAMING`, `IDLE_UNLOAD_S`, `LAZY_LOAD`,
    `VRAM_RESERVE_MIB`, `SAMPLING_TEMPERATURE`, `SAMPLING_TOP_P`,
    `SAMPLING_TOP_K`, `SAMPLING_MIN_P`, `REPETITION_PENALTY`, `PENALTY_LAST_N`,
    `REASONING_BUDGET_TOKENS`, `REASONING_LOOP_RECOVERY`, `ROCM_TAG`,
@@ -70,9 +70,10 @@ curl -X POST -H "Authorization: Bearer $STRATA_KEY" \
 ## Decoding defaults, and why
 
 `setup.py` writes no `sampling` block, and a request that sends no temperature
-then decodes **greedy**. On this 1-bit Coder a hard prompt (macro-heavy Rust,
+then decodes **greedy**. On a low-bit model a hard prompt (macro-heavy Rust,
 for example) falls into a loop inside its thinking: it spends the whole token
-budget there and returns no answer at all. `strata-wrapper.sh` therefore writes:
+budget there and returns no answer at all. This was measured on the Coder
+`IQ1_M` the box ran first, and the defaults are kept for `IQ2_XS`. `strata-wrapper.sh` therefore writes:
 
 | Key | Value | Effect |
 | --- | --- | --- |
