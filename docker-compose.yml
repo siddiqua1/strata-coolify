@@ -1,0 +1,70 @@
+# Strata on Coolify (Docker Compose build pack), next to Jellyfin on the same
+# RX 7900 XT. Set the required variables in Coolify's environment tab; API_KEY
+# as a secret. The domain is set on the service in Coolify's Domains tab (port
+# 8080); the Traefik label below reads it back as SERVICE_FQDN_STRATA.
+services:
+  strata:
+    build:
+      context: .
+      dockerfile: Dockerfile.rocm
+      args:
+        ROCM_TAG: ${ROCM_TAG:-7.2.4-complete}
+        STRATA_REF: ${STRATA_REF:-296b59d2f73c8f04a805df29c2fa97655adace78}
+    restart: unless-stopped
+    # The engine releases tens of GB of page-locked RAM on SIGTERM, which takes
+    # longer than Docker's default 10 s.
+    stop_grace_period: 60s
+    devices:
+      - /dev/kfd
+      - /dev/dri
+    # Numeric host GIDs: group names inside the Ubuntu image do not match
+    # Arch's GIDs. On this host: getent group video render -> 985, 989.
+    group_add:
+      - "${VIDEO_GID:-985}"
+      - "${RENDER_GID:-989}"
+    ipc: host
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+    # Backstop, about 6 GB above Strata's footprint (23.4 GB of Coder experts +
+    # ~2.2 GB of k8v4 KV at 200K + runtime). It keeps a runaway Strata from
+    # taking Jellyfin down with it. Tighten after measuring docker stats.
+    mem_limit: 32g
+    # Half the default weight: Jellyfin wins when the CPU is contended.
+    cpu_shares: 512
+    environment:
+      API_KEY: ${API_KEY:?set API_KEY}
+      FAMILY: ${FAMILY:-coder}
+      MODEL: ${MODEL:-IQ1_M}
+      KV: ${KV:-k8v4}
+      KV_STREAMING: ${KV_STREAMING:-on}
+      CONTEXT: ${CONTEXT:-204800}
+      IDLE_UNLOAD_S: ${IDLE_UNLOAD_S:-1800}
+      LAZY_LOAD: ${LAZY_LOAD:-true}
+      VRAM_RESERVE_MIB: ${VRAM_RESERVE_MIB:-3072}
+    volumes:
+      # Model files, MTP layer and config (~70 GB). An NVMe directory that does
+      # not hold Jellyfin's media or transcode directory.
+      - ${STRATA_DATA_PATH:-/home/ash/strata}:/data
+    expose:
+      - "8080"
+    # Coolify's Traefik reaches services on the shared "coolify" network.
+    networks:
+      - coolify
+    labels:
+      - "traefik.enable=true"
+      - "traefik.docker.network=coolify"
+      - "traefik.http.routers.strata.rule=Host(`${SERVICE_FQDN_STRATA:-strata.ash-siddiqui.com}`)"
+      - "traefik.http.routers.strata.entryPoints=http"
+      - "traefik.http.routers.strata.service=strata"
+      - "traefik.http.services.strata.loadbalancer.server.port=8080"
+    logging:
+      driver: json-file
+      options:
+        max-size: "10m"
+        max-file: "3"
+
+networks:
+  coolify:
+    external: true

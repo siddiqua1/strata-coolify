@@ -1,0 +1,68 @@
+# syntax=docker/dockerfile:1
+#
+# Strata (Qwen3.8-Flash-Next Coder) on an AMD RX 7900 XT (gfx1100) with ROCm.
+#
+# Upstream's Dockerfile builds the CUDA engine only. This one builds the HIP
+# engine instead, by calling setup.py's own build_engine_hip(), so
+# engine/BUILD.json is written exactly the way setup.py expects and the first
+# container start reuses the engine instead of compiling it again.
+#
+# The engine's CPU kernels are compiled natively for the CPU that runs the
+# build, so build the image on the host that runs it.
+
+ARG ROCM_TAG=7.2.4-complete
+FROM rocm/dev-ubuntu-24.04:${ROCM_TAG}
+
+# Strata commit to build. Change it on purpose to upgrade; a moving branch would
+# let an upstream change break a rebuild without warning.
+ARG STRATA_REF=296b59d2f73c8f04a805df29c2fa97655adace78
+ARG HIP_ARCH=gfx1100
+
+# STRATA_EXECV=1: setup.py replaces itself with the server, so the server is
+# PID 1 and docker stop's SIGTERM reaches it.
+ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 LANG=C.UTF-8 \
+    STRATA_EXECV=1 ROCM_PATH=/opt/rocm
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+        build-essential ca-certificates cmake curl git jq libatomic1 libgomp1 \
+        python3 python3-pip python3-venv unzip \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/strata
+RUN git init -q . \
+    && git remote add origin https://github.com/Niko1221/Strata \
+    && git fetch -q --depth 1 origin "$STRATA_REF" \
+    && git checkout -q FETCH_HEAD
+
+RUN python3 -m venv .venv \
+    && .venv/bin/pip install --no-cache-dir --upgrade pip \
+    && .venv/bin/pip install --no-cache-dir -r requirements.txt \
+    && chmod +x setup.sh docker-entrypoint.sh
+
+# The system ROCm in /opt/rocm is found by setup.rocm_root(); no ROCm wheels
+# are downloaded into .venv. Vision stays off: the Coder is used for code only.
+RUN .venv/bin/python - <<'PYEOF'
+import os
+import setup
+
+llama = setup.get_llama_cpp()
+setup.build_engine_hip({"arch": os.environ["HIP_ARCH"]}, llama, vision="none")
+PYEOF
+
+# The cmake tree is build-time only; engine/ holds what the container runs.
+RUN rm -rf build-hip
+
+COPY strata-wrapper.sh /opt/strata/strata-wrapper.sh
+RUN chmod +x /opt/strata/strata-wrapper.sh
+
+VOLUME ["/data"]
+EXPOSE 8080
+
+# /health answers 200 whether or not the model is loaded, so an idle-unloaded
+# server stays healthy and Traefik keeps routing to it. The 30 minute start
+# period covers the first start's ~58 GB model download; a shorter one would
+# mark a still-downloading container unhealthy.
+HEALTHCHECK --interval=30s --timeout=5s --start-period=1800s --retries=3 \
+  CMD curl -fs "http://127.0.0.1:${PORT:-8080}/health" || exit 1
+
+ENTRYPOINT ["/opt/strata/strata-wrapper.sh"]
