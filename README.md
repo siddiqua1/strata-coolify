@@ -66,9 +66,11 @@ curl -X POST -H "Authorization: Bearer $STRATA_KEY" \
 
 ## Operating
 
-- **Data** lives in `STRATA_DATA_PATH` on the host (`/home/ash/strata`): model
-  files, MTP layer, config. ~70 GB. Backing it up is optional; a rebuild
-  re-downloads.
+- **Data** lives at `/home/ash/strata` on the host (62 GB after the first
+  start): model files, MTP layer, config. Backing it up is optional; a rebuild
+  re-downloads. Coolify resolves the volume path when the resource's compose is
+  saved, so to move it, edit the `volumes:` entry in the compose file (Coolify's
+  Compose tab) and redeploy, not just the `STRATA_DATA_PATH` variable.
 - **Change model settings** (context, KV, family/model): set `REINSTALL=1` in
   Coolify for one start, then remove it. `strata-wrapper.sh` re-runs setup and
   re-applies `idle_unload_s`, `lazy_load`, `api_key` and `--vram-reserve-mib`.
