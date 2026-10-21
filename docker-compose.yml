@@ -52,13 +52,15 @@ services:
     # Coolify's Traefik reaches services on the shared "coolify" network.
     networks:
       - coolify
+    # Coolify generates the Traefik router and service for the domain set in
+    # the Domains tab (SERVICE_FQDN_STRATA). Only the network hint is needed
+    # here: the container ends up on both "coolify" and the app network, so
+    # Traefik must be told which one to reach it on. A hand-written router rule
+    # that references $SERVICE_FQDN_STRATA is escaped by Coolify and makes
+    # Traefik drop every label on the container.
     labels:
       - "traefik.enable=true"
       - "traefik.docker.network=coolify"
-      - "traefik.http.routers.strata.rule=Host(`${SERVICE_FQDN_STRATA:-strata.ash-siddiqui.com}`)"
-      - "traefik.http.routers.strata.entryPoints=http"
-      - "traefik.http.routers.strata.service=strata"
-      - "traefik.http.services.strata.loadbalancer.server.port=8080"
     logging:
       driver: json-file
       options:
