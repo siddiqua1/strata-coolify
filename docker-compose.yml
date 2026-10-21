@@ -27,10 +27,10 @@ services:
       memlock:
         soft: -1
         hard: -1
-    # Backstop, about 6 GB above Strata's footprint (23.4 GB of Coder experts +
-    # ~2.2 GB of k8v4 KV at 200K + runtime). It keeps a runaway Strata from
-    # taking Jellyfin down with it. Tighten after measuring docker stats.
-    mem_limit: 32g
+    # Backstop above Strata's resident footprint: IQ3_XXS keeps ~31 GB of
+    # experts in RAM (the card holds the rest) + ~2.2 GB of k8v4 KV at 200K +
+    # runtime. It keeps a runaway Strata from taking Jellyfin down with it.
+    mem_limit: 38g
     # Half the default weight: Jellyfin wins when the CPU is contended.
     cpu_shares: 512
     # The image's healthcheck probes :8080, which does not answer until the
