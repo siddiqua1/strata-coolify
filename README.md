@@ -99,6 +99,17 @@ the same prompt, so 3 bits buys idiom and speed, not reliability: treat this
 task as retry-until-it-compiles, and 4-bit (~93% quant agreement) as the next
 real step.
 
+**Getting usable code out of it.** A one-line prompt compiled 1 time in 5 on
+this model. A structured prompt (exact API, macro shape, examples, tests) kept
+the same first-pass rate but made every sample structurally right — ownership
+slips (`E0382` on `prev`/`key`) and macro-fragment errors were the only
+failures. Feeding the `rustc` errors back for one more round took **5 of 5**
+samples to compiling code with all four tests passing. The prompt and the
+measured workflow are in
+[prompts/rust-lru-decorator.md](prompts/rust-lru-decorator.md); an agent with
+shell access can run that loop itself, in a plain chat you paste the compiler
+output back.
+
 ## Operating
 
 - **Data** lives at `/home/ash/strata` on the host (118 GB for IQ3_XXS after
