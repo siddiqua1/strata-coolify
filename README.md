@@ -90,9 +90,21 @@ curl -X POST -H "Authorization: Bearer $STRATA_KEY" \
 - The model's 28.8 GB n-gram (PLE) table is read with `O_DIRECT`, bypassing page
   cache, so it does not count against `mem_limit`. It needs a fast NVMe: a
   spinning disk stalls prompts.
-- The first build pulls ~7.4 GB and leaves ~25 GB of image; model + image need
+- The first build pulls ~7.4 GB and leaves a 22.4 GB image; model + image need
   roughly 100 GB, hence the NVMe data directory.
-- Unverified, as with any new build: no published Coder throughput for the 7900
-  XT (nearest: RX 9070 XT ~44 tok/s), and a cold 200K prompt is estimated at
-  2–3 min. If ROCm reports permission errors on `/dev/kfd`, add
+- Unverified: a cold 200K-token prompt has not been timed (estimated 2–3 min).
+  If ROCm reports permission errors on `/dev/kfd`, add
   `security_opt: [seccomp=unconfined]` to the service.
+
+## Measured on this host (RX 7900 XT, Ryzen 9800X3D, 48 GB)
+
+- Image build: ~5 min including the 7.4 GB base pull; the HIP engine itself
+  compiles in about a minute.
+- First start: 58.4 GB download plus packing the MTP layer. The model is
+  reusable across container recreations; later starts skip setup entirely.
+- Model load: 23.42 GiB of experts at 3.3–3.7 GiB/s (12–15 s).
+- Memory: 27 GiB RSS against the 32 GiB limit; 17.3 GiB of 20 GiB VRAM used, so
+  the 3072 MiB reserve for Jellyfin is honoured.
+- Decode: 47.7 tok/s over a 32-token answer with speculative decoding, expert
+  cache 80.9% hit.
+- Restart with the model unloaded: `/health` answers in about 3 s.
