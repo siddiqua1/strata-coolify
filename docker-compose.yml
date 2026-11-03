@@ -35,7 +35,7 @@ services:
       memlock:
         soft: -1
         hard: -1
-    # Backstop above Strata's resident footprint: IQ3_XXS keeps ~31 GB of
+    # Backstop above Strata's resident footprint: IQ2_XS keeps ~28 GB of
     # experts in RAM (the card holds the rest) + ~1.4 GB of k8v4 KV at 128K +
     # two request slots + runtime. It keeps a runaway Strata from taking
     # Jellyfin down with it.
@@ -45,7 +45,7 @@ services:
     environment:
       API_KEY: ${API_KEY:?set API_KEY}
       FAMILY: ${FAMILY:-qwen}
-      MODEL: ${MODEL:-IQ3_XXS}
+      MODEL: ${MODEL:-IQ2_XS}
       KV: ${KV:-k8v4}
       CONTEXT: ${CONTEXT:-131072}
       # Two batch slots: an agent and one helper (or two helpers) decode

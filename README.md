@@ -1,7 +1,7 @@
 # Strata on Coolify
 
 Runs [Strata](https://github.com/Niko1221/Strata) 0.2.10 (Qwen3.8-Flash-Next,
-the full model at `IQ3_XXS`) on an AMD RX 7900 XT (`gfx1100`) as a Coolify
+the full model at `IQ2_XS`) on an AMD RX 7900 XT (`gfx1100`) as a Coolify
 Docker Compose resource, sharing the card with Jellyfin.
 
 The image is assembled from the v0.2.10 Terminal source and the signed 0.1.56
@@ -14,7 +14,7 @@ is compiled, so a deploy takes minutes rather than the old 10–20 minute
 
 | Setting | Value | Why |
 | --- | --- | --- |
-| `FAMILY` / `MODEL` | `qwen` / `IQ3_XXS` | all 512 experts, 42.9 GB of experts, 76 GB download |
+| `FAMILY` / `MODEL` | `qwen` / `IQ2_XS` | all 512 experts at 2-bit, 35.5 GB of experts, 69 GB download |
 | `CONTEXT` / `KV` | `131072` / `k8v4` | 128K, the context window the agent clients are configured for; KV streamed to RAM (~1.4 GB) |
 | `PARALLEL` | `2` | two request slots, so a subagent can decode beside its parent instead of waiting for the whole answer |
 | `STRATA_SET` | `--vram-reserve-mib=3072 --batch-mtp=1` | VRAM left for Jellyfin's VAAPI transcodes; MTP drafts in both slots |
