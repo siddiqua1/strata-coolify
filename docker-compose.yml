@@ -35,9 +35,9 @@ services:
       memlock:
         soft: -1
         hard: -1
-    # Backstop above Strata's resident footprint: IQ2_XS keeps ~28 GB of
-    # experts in RAM (the card holds the rest) + ~1.4 GB of k8v4 KV at 128K +
-    # two request slots + runtime. It keeps a runaway Strata from taking
+    # Backstop above the measured footprint: IQ2_XS maps 33 GB of experts
+    # through the file cache (the card holds the rest) + two request slots +
+    # runtime; Docker measured 34.4 GiB. It keeps a runaway Strata from taking
     # Jellyfin down with it.
     mem_limit: 40g
     # Half the default weight: Jellyfin wins when the CPU is contended.

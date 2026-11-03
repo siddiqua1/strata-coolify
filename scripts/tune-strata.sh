@@ -32,7 +32,7 @@ path = sys.argv[1]
 with open(path, encoding="utf-8") as fh:
     cfg = json.load(fh)
 
-# Tuned on IQ3_XXS for code/agent work: sampled decoding instead of greedy, a
+# Tuned for the deployed Qwen3.8 quant (IQ2_XS) on code/agent work: sampled decoding instead of greedy, a
 # mild repetition penalty over a long window, and a thinking cap that leaves
 # room for a tool call in a subagent turn. A request's own values still win.
 cfg["sampling"] = {

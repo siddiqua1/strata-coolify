@@ -20,8 +20,10 @@ is compiled, so a deploy takes minutes rather than the old 10–20 minute
 | `STRATA_SET` | `--vram-reserve-mib=3072 --batch-mtp=1` | VRAM left for Jellyfin's VAAPI transcodes; MTP drafts in both slots |
 | `VISION` / `TUNE` | `off` / `skip` | the Coder is used for text and tools only |
 
-0.2.10 chooses the low-RAM mode itself (`resident`: the experts the GPU does not
-hold are copied into RAM). It no longer needs the old `LOW_RAM`, `LAZY_LOAD`,
+0.2.10 chooses the low-RAM mode itself. For IQ2_XS the engine maps the 33 GiB
+expert arena through the file cache and the OS keeps the hot pages there; that
+is what makes a 13K-token prompt finish in seconds instead of the old resident
+mode's minute. It no longer needs the old `LOW_RAM`, `LAZY_LOAD`,
 `IDLE_UNLOAD_S` or `KV_STREAMING` variables; those names are ignored with a
 warning by the 0.2.x entrypoint. The Jellyfin-friendly idle unload and the
 agent sampling defaults are applied once to the installed config by
@@ -51,18 +53,19 @@ sides of that:
   thinking that would otherwise leave no room for an answer, and the installer
   and engine have the agent-loop fixes made since 0.1.44.1.
 
-Two slots, not more: on this card most experts run from RAM, and every slot
-takes a session out of the expert cache. Two keeps the single-request speed
-reasonable while removing the hard serialization; three or four would trade
-noticeably more single-stream speed for a fan-out this 20 GB card cannot keep
-busy. `--batch-mtp=1` gives each slot the MTP drafter, which is what keeps the
-two streams close to one stream's total speed. The exact cost is measured
+Two slots, not more: every slot takes a session out of the expert cache, and
+this 20 GB card has little room beside the 3 GB Jellyfin reserve. Two keeps the
+single-request speed reasonable while removing the hard serialization; three
+would trade more single-stream speed for a fan-out this card cannot keep busy.
+`--batch-mtp=1` gives each slot the MTP drafter, which is what keeps the two
+streams close to one stream's total speed. The exact numbers are measured
 below.
 
-**DSH:** the harness defaults to `maxActiveSubagents: 8` for a local model.
-Set it to `2` in **Settings → Subagent** for this endpoint, otherwise the
-helpers past the second one queue for a slot and the task takes longer than it
-needs to. Two in flight is the useful shape here; a wider fan-out is not.
+**DSH:** the limit is **Plugins → Subagent → Subagent parallelism limit** in
+the sidebar (not Settings); the Host default is 8. The separate `strata`
+profile sets it to 2 and defaults to this model. The `web` profile still uses 8
+and queues helpers past the second one at Strata's two slots. Two in flight is
+the useful shape here; a wider fan-out is not.
 
 ## Deploying in Coolify
 
@@ -211,54 +214,56 @@ bounds; the deployment does not turn the box into a parallel inference farm.
   block and use that `image:` instead.
 - The 28.8 GB n-gram (PLE) table is read with `O_DIRECT`, bypassing page cache,
   so it does not count against `mem_limit`. It needs a fast NVMe.
-- A cold 128K prompt has not been timed after the upgrade; measured numbers are
-  for short/medium prompts.
+- A cold 128K prompt has not been timed; a 13K-token prompt is measured at
+  15.6 s in the measurements below. Longer prompts pay the same prompt rate plus their extra chunks.
 - The image's Docker healthcheck probes `/v1/models` with the API key. During
   the first start (model preparation) the container is `starting`, not
   `unhealthy`; Traefik routes only once it is healthy.
-- 3-bit IQ3_XXS is not a reliable one-shot code generator. The measured repair
+- 2-bit IQ2_XS is not a reliable one-shot code generator. The measured repair
   loop (feed `rustc` errors back for one more round) is in
   [prompts/rust-lru-decorator.md](prompts/rust-lru-decorator.md); subagents that
   write code should be given the same retry budget.
-- **Quant:** IQ3_XXS is kept. With two slots and the full resident copy it
-  reaches ~47 tok/s aggregate, which is enough for a two-helper DSH tree; a
-  2-bit set (IQ2_XS) would free several GB for a third slot or a conversation
-  cache, but it measured 1 of 5 on the macro task against 2 of 10 for IQ3_XXS.
-  That is the wrong trade for coding subagents unless a wider fan-out matters
-  more than first-pass correctness.
+- **Quant:** IQ2_XS was chosen over IQ3_XXS for speed. It reads a 13K prompt at
+  ~880 tok/s and serves two concurrent tool turns in ~4 s each, where IQ3_XXS
+  read the same prompt for minutes and tripped the engine watchdog. The cost is
+  first-pass correctness: IQ2_XS measured 1 of 5 on the macro coding task
+  against 2 of 10 for IQ3_XXS. The IQ3_XXS files are still on the volume, so
+  rolling back is a one-variable change (and a load), not a download.
 
 ## Measured on this host (RX 7900 XT, Ryzen 9800X3D, 48 GB)
 
-Measured on the 0.2.10 image and the old IQ3_XXS volume, 128K context, two
-slots, `--batch-mtp=1`.
+Measured on the 0.2.10 image, IQ2_XS, 128K context, two slots,
+`--batch-mtp=1`.
 
-- Image build: about 2–3 minutes with a warm Docker cache (the deploy ran in
-  about 2.5 minutes); a cold build also downloads the 32 MB source, 286 MB
-  engine package, Terminal Python and wheels. No compile.
-- First 0.2.x start on the old volume: about 2 minutes. The entrypoint moved
-  `models/`, `packs/` and `mtp/` into `/data/Strata-data` by rename, verified
-  the existing files, downloaded the 1.2 GB DFlash2 drafter once, then started
-  with the MTP because two slots are configured. No model download.
-- Model load: 16.7 s.
-- Memory: 32.5 GiB in Docker against the 40 GiB limit; the engine keeps
-  31.04 GiB of experts in RAM and the rest through the file tier. 17.4 GiB of
-  20.4 GiB VRAM used, so the 3072 MiB reserve for Jellyfin is honoured. Host
-  `MemAvailable` is about 3.9–4.1 GiB while the model is loaded. This is the
-  same tight margin the 0.1.44.1 deployment ran with; the host also runs
-  Jellyfin and Coolify.
-- Single request (256-token cap): 39.9 tok/s; a tool-call turn after the
-  prompt cache warmed ran at 43.4 tok/s.
-- Two concurrent requests: 46.8 tok/s aggregate (26.9 and 31.8 tok/s per
-  request) over 5.7 s. Two streams cost almost nothing in total throughput.
-  A fully resident run (after `/unload` + `/load`, when the host has released
-  the file cache) measured 47.3 tok/s single and 49.3 aggregate; this host
-  usually settles at the 31 GiB copy above.
-- Concurrent tool calls: two calculator requests both returned a proper
-  `tool_calls` response (about 9 s each with the tuned thinking budget).
+- Image build: about 2–3 minutes with a warm Docker cache; a cold build also
+  downloads the 32 MB source, 286 MB engine package, Terminal Python and
+  wheels. No compile.
+- Model install: the 68 GB IQ2_XS download, file check, one-time pack and MTP
+  preparation took about 13 minutes on this connection, then a 15.7 s load.
+  The old IQ3_XXS files were kept.
+- Long prompt: 13,265 tokens read in 15.6 s (880 tok/s), answered in 15.6 s
+  total. The same shape of prompt stalled IQ3_XXS for minutes and tripped the
+  engine watchdog, which is what produced the DSH "engine stopped while this
+  request waited" error.
+- Single request: 64–88 tok/s depending on the output length (64.1 over 123
+  generated tokens; 87.9 over a 31-token answer on the public route).
+- Two concurrent requests: 56–70 tok/s aggregate over 5–6 s (for example 159
+  and 197 tokens in 6.3 s); the two slots keep the total close to one stream.
+- Two concurrent calculator tool calls: both returned `tool_calls` in 3.9 and
+  4.3 s.
+- Four concurrent 13K-token prompts (the DSH fan-out shape): all four
+  completed in 51.8 s wall time; the engine stayed up, and prompt reads ran at
+  772–880 tok/s. This is the case that previously killed IQ3_XXS and failed
+  the queued DSH requests.
+- Memory: 34.4 GiB in Docker against the 40 GiB limit; the engine maps
+  33.0 GiB of experts through the file cache, and 17.5 GiB of 20.4 GiB VRAM is
+  used, so the 3072 MiB reserve for Jellyfin is honoured. Host
+  `MemAvailable` is about 2 GiB while the model is loaded; this is still a
+  tight host, so keep Jellyfin's load in mind.
 - Restart with the model unloaded (`lazy_load`): the container is healthy in
-  about 20 s; `/v1/load` takes 16.7 s.
+  about 18 s; `/v1/load` takes 15.7 s.
 - Conversation cache: **off** on this host. After the model is loaded there is
   not enough free RAM to park conversations (`/metrics` shows
   `"enabled": false, "budget_mib": 0`). The two batch slots keep their active
-  sessions, which is what covers a two-helper DSH tree; alternating chats
-  beyond that re-read their prompts.
+  sessions, which covers a two-helper DSH tree; alternating chats beyond that
+  re-read their prompts.
