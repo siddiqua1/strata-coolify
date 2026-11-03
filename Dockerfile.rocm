@@ -1,68 +1,148 @@
 # syntax=docker/dockerfile:1
 #
-# Strata (Qwen3.8-Flash-Next Coder) on an AMD RX 7900 XT (gfx1100) with ROCm.
+# Strata 0.2.10 on an AMD RX 7900 XT (gfx1100), built exactly like upstream's
+# ready-made container: the 0.2.10 Terminal plus the signed 0.1.56 HIP engine
+# package from the v0.2.10 release. Nothing is compiled here, so a deploy takes
+# minutes rather than the old 10-20 minute `build_engine_hip()` run.
 #
-# Upstream's Dockerfile builds the CUDA engine only. This one builds the HIP
-# engine instead, by calling setup.py's own build_engine_hip(), so
-# engine/BUILD.json is written exactly the way setup.py expects and the first
-# container start reuses the engine instead of compiling it again.
+# Upstream publishes images from 0.2.1 on, but there is no
+# `0.2.10-rocm-gfx110x` tag yet (the newest published HIP image is 0.2.9). This
+# file assembles the same image from the release sources and the signed engine
+# package until that tag exists. To move to a release that has a published
+# image, replace the `build:` block in docker-compose.yml with:
 #
-# The engine's CPU kernels are compiled natively for the CPU that runs the
-# build, so build the image on the host that runs it.
+#   image: ghcr.io/niko1221/strata:0.2.10-rocm-gfx110x
+#
+# The engine package is pinned by SHA-256. Its archive is verified again by
+# upstream's packaging/package_engine.py before it is copied into the runtime
+# image; the source tree is pinned to the v0.2.10 commit, not a branch.
 
-ARG ROCM_TAG=7.2.4-complete
-FROM rocm/dev-ubuntu-24.04:${ROCM_TAG}
+ARG BASE_IMAGE=ubuntu:24.04
 
-# Strata commit to build. Change it on purpose to upgrade; a moving branch would
-# let an upstream change break a rebuild without warning.
-ARG STRATA_REF=296b59d2f73c8f04a805df29c2fa97655adace78
-ARG HIP_ARCH=gfx1100
+# ---- 0. download the pinned sources and the signed engine package
+FROM ${BASE_IMAGE} AS fetch
+ARG STRATA_VERSION=0.2.10
+ARG STRATA_COMMIT=ffa80d73133ea5c548aefe57889a16e8085a938f
+ARG ENGINE_PACKAGE=strata-engine-0.1.56-linux-x86_64-hip-rx7900.tar.gz
+ARG ENGINE_DIR=0.1.56-linux-x86_64-hip-rx7900
+ARG ENGINE_SHA256=b57768c85db8aa47f6bd62352df561f22504420a9629c49a573749a9555c6b1d
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends ca-certificates curl \
+ && rm -rf /var/lib/apt/lists/*
+RUN curl -fsSL --retry 5 --retry-delay 2 --connect-timeout 20 \
+      -o /tmp/src.tar.gz "https://codeload.github.com/Niko1221/Strata/tar.gz/${STRATA_COMMIT}" \
+ && mkdir -p /src \
+ && tar -xzf /tmp/src.tar.gz --strip-components=1 -C /src \
+ && rm -f /tmp/src.tar.gz
+RUN curl -fsSL --retry 5 --retry-delay 2 --connect-timeout 20 \
+      -o /tmp/engine.tar.gz "https://github.com/Niko1221/Strata/releases/download/v${STRATA_VERSION}/${ENGINE_PACKAGE}" \
+ && printf '%s  %s\n' "$ENGINE_SHA256" /tmp/engine.tar.gz | sha256sum -c - \
+ && mkdir -p "/engine/${ENGINE_DIR}" \
+ && tar -xzf /tmp/engine.tar.gz -C "/engine/${ENGINE_DIR}" \
+ && test -f "/engine/${ENGINE_DIR}/engine-component.json" \
+ && rm -f /tmp/engine.tar.gz
 
-# STRATA_EXECV=1: setup.py replaces itself with the server, so the server is
-# PID 1 and docker stop's SIGTERM reaches it.
-ENV DEBIAN_FRONTEND=noninteractive PYTHONUNBUFFERED=1 LANG=C.UTF-8 \
-    STRATA_EXECV=1 ROCM_PATH=/opt/rocm
+# ---- 1. the Terminal (upstream packaging/package_terminal.py: pinned CPython + locked wheels)
+FROM ${BASE_IMAGE} AS terminal
+ARG STRATA_COMMIT=ffa80d73133ea5c548aefe57889a16e8085a938f
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends python3 ca-certificates \
+ && rm -rf /var/lib/apt/lists/*
+COPY --from=fetch /src /src
+ENV STRATA_BUILD_COMMIT=${STRATA_COMMIT}
+RUN python3 /src/packaging/package_terminal.py --out /out --cache /cache \
+ && mkdir -p /opt/strata \
+ && tar -xzf /out/strata-terminal-*-linux-x86_64.tar.gz -C /opt/strata \
+ && mv /opt/strata/strata-terminal-* /opt/strata/terminal \
+ && /opt/strata/terminal/bin/strata --version
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-        build-essential ca-certificates cmake curl git jq libatomic1 libgomp1 \
-        python3 python3-pip python3-venv unzip \
-    && rm -rf /var/lib/apt/lists/*
+# llama.cpp at the commit setup.py pins: fetched at build time, so the first
+# container start does not depend on GitHub. Keep only gguf-py (model
+# preparation) and the file setup.py looks for (ggml/CMakeLists.txt).
+RUN cd /opt/strata/terminal && STRATA_CONTROL_INSTALL=1 STRATA_INSTALL_DIR=/opt/strata/seed PYTHONNOUSERSITE=1 \
+      /opt/strata/terminal/python/bin/python3 -c "import setup; print(setup.get_llama_cpp())" \
+ && rm -rf /opt/strata/seed/third_party/*.zip* \
+ && cd /opt/strata/seed/third_party/llama.cpp \
+ && find . -mindepth 1 -maxdepth 1 ! -name gguf-py ! -name ggml ! -name 'LICENSE*' -exec rm -rf {} + \
+ && find ggml -mindepth 1 -depth ! -type d ! -name CMakeLists.txt -delete \
+ && find ggml -mindepth 1 -type d -empty -delete
 
-WORKDIR /opt/strata
-RUN git init -q . \
-    && git remote add origin https://github.com/Niko1221/Strata \
-    && git fetch -q --depth 1 origin "$STRATA_REF" \
-    && git checkout -q FETCH_HEAD
+# ---- 2. verify the engine package (every file's hash, every library it imports)
+FROM ${BASE_IMAGE} AS verify
+COPY --from=terminal /opt/strata/terminal /opt/strata/terminal
+COPY --from=fetch /src/packaging/package_engine.py /src/packaging/binary_deps.py /opt/strata/terminal/packaging/
+COPY --from=fetch /engine/ /engine/
+RUN set -e; \
+    n=0; \
+    for d in /engine/*/; do \
+      echo "== $d"; \
+      /opt/strata/terminal/python/bin/python3 /opt/strata/terminal/packaging/package_engine.py --verify "$d"; \
+      /opt/strata/terminal/python/bin/python3 /opt/strata/terminal/packaging/binary_deps.py "$d"; \
+      n=$((n+1)); \
+    done; \
+    [ "$n" -ge 1 ] || { echo "no engine package in the build context"; exit 1; }
 
-RUN python3 -m venv .venv \
-    && .venv/bin/pip install --no-cache-dir --upgrade pip \
-    && .venv/bin/pip install --no-cache-dir -r requirements.txt \
-    && chmod +x setup.sh docker-entrypoint.sh
+# ---- 3. runtime: the Terminal, the engine package and upstream's container entrypoint
+FROM ${BASE_IMAGE}
+ARG STRATA_VERSION=0.2.10
+ARG ENGINE_PACKAGE=strata-engine-0.1.56-linux-x86_64-hip-rx7900.tar.gz
+ENV DEBIAN_FRONTEND=noninteractive
 
-# The system ROCm in /opt/rocm is found by setup.rocm_root(); no ROCm wheels
-# are downloaded into .venv. Vision stays off: the Coder is used for code only.
-RUN .venv/bin/python - <<'PYEOF'
-import os
-import setup
+# The HIP engine package carries the ROCm user space; the image adds the
+# system libraries it leaves to the OS and tini (PID 1, so `docker stop`
+# reaches the entrypoint and the engine's clean unload).
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends \
+      tini ca-certificates libgomp1 libatomic1 libnuma1 zlib1g \
+      libdrm2 libdrm-amdgpu1 libelf1t64 libtinfo6 libpci3 \
+ && rm -rf /var/lib/apt/lists/* /var/cache/apt/*
 
-llama = setup.get_llama_cpp()
-setup.build_engine_hip({"arch": os.environ["HIP_ARCH"]}, llama, vision="none")
-PYEOF
+COPY --from=terminal /opt/strata/terminal /opt/strata/terminal
+COPY --from=terminal /opt/strata/seed /opt/strata/seed
+COPY --from=verify /engine/ /opt/strata/components/engine/
+COPY --from=fetch /src/docker/entrypoint.sh /src/docker/healthcheck.sh /opt/strata/
+COPY --from=fetch /src/docker/strata-wrapper.sh /usr/local/bin/strata
+# Upstream 0.2.10 passes `--set $kv`, so a value that starts with `--` (an
+# engine flag such as --vram-reserve-mib=3072) is parsed as an option and the
+# launch fails. Pass it as one `--set=...` argument instead; the pin above makes
+# the sed exact. A future source bump must keep this line working.
+RUN sed -i 's|set -- "$@" --set "$kv"|set -- "$@" "--set=$kv"|' /opt/strata/entrypoint.sh \
+ && grep -q -- 'set -- "$@" "--set=$kv"' /opt/strata/entrypoint.sh \
+ && chmod 0755 /opt/strata/entrypoint.sh /opt/strata/healthcheck.sh /usr/local/bin/strata
 
-# The cmake tree is build-time only; engine/ holds what the container runs.
-RUN rm -rf build-hip
-
-COPY strata-wrapper.sh /opt/strata/strata-wrapper.sh
-RUN chmod +x /opt/strata/strata-wrapper.sh
-
+# Everything that is yours lives in /data: model files, the prepared pack,
+# presets, tuning, the API key and logs. The Terminal and engine are in the
+# image, so updating the image never touches them.
+ENV STRATA_COMPONENTS_DIR=/opt/strata/components \
+    STRATA_INSTALL_DIR=/data/install \
+    XDG_STATE_HOME=/data/state \
+    XDG_CONFIG_HOME=/data/config \
+    HOME=/data/home \
+    PORT=8080 \
+    LANG=C.UTF-8 PYTHONUNBUFFERED=1 PYTHONNOUSERSITE=1 \
+    STRATA_IN_DOCKER=1
 VOLUME ["/data"]
 EXPOSE 8080
 
-# /health answers 200 whether or not the model is loaded, so an idle-unloaded
-# server stays healthy and Traefik keeps routing to it. The 30 minute start
-# period covers the first start's ~58 GB model download; a shorter one would
-# mark a still-downloading container unhealthy.
-HEALTHCHECK --interval=30s --timeout=5s --start-period=1800s --retries=3 \
-  CMD curl -fs "http://127.0.0.1:${PORT:-8080}/health" || exit 1
+LABEL org.opencontainers.image.title="Strata" \
+      org.opencontainers.image.source="https://github.com/Niko1221/Strata" \
+      org.opencontainers.image.url="https://github.com/Niko1221/Strata" \
+      org.opencontainers.image.documentation="https://github.com/Niko1221/Strata/blob/v0.2.10/docs/DOCKER.md" \
+      org.opencontainers.image.description="Strata local LLM server (Terminal + HIP engine), flavor hip" \
+      org.opencontainers.image.version="${STRATA_VERSION}" \
+      org.opencontainers.image.licenses="MIT" \
+      com.strata.flavor="hip" \
+      com.strata.engine="${ENGINE_PACKAGE}"
 
-ENTRYPOINT ["/opt/strata/strata-wrapper.sh"]
+# The server is healthy once /v1/models answers; during the first start the
+# model is downloaded and prepared, so the start period is long. The model may
+# be idle-unloaded and still answer /v1/models, so it stays healthy.
+HEALTHCHECK --interval=30s --timeout=8s --start-period=2h --retries=3 CMD ["/opt/strata/healthcheck.sh"]
+
+# `docker stop` sends SIGTERM to tini; the entrypoint drains, unloads the model
+# and gives the GPU memory back.
+STOPSIGNAL SIGTERM
+ENTRYPOINT ["/usr/bin/tini", "--", "/opt/strata/entrypoint.sh"]
+CMD ["run"]

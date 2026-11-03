@@ -1,19 +1,26 @@
-# Strata on Coolify (Docker Compose build pack), next to Jellyfin on the same
-# RX 7900 XT. Set the required variables in Coolify's environment tab; API_KEY
-# as a secret. The domain is set on the service in Coolify's Domains tab (port
-# 8080); Coolify adds the Traefik router and network itself.
+# Strata 0.2.10 on Coolify (Docker Compose build pack), next to Jellyfin on the
+# same RX 7900 XT. Set the required variables in Coolify's environment tab;
+# API_KEY as a secret. The domain is set on the service in Coolify's Domains
+# tab (port 8080); Coolify adds the Traefik router and network itself.
+#
+# This image is built from the v0.2.10 source and the signed 0.1.56 HIP engine
+# package, because upstream has no 0.2.10 ROCm image tag yet. Once
+# `ghcr.io/niko1221/strata:0.2.10-rocm-gfx110x` exists, replace `build:` with
+# `image: ghcr.io/niko1221/strata:0.2.10-rocm-gfx110x` and drop the build args.
 services:
   strata:
     build:
       context: .
       dockerfile: Dockerfile.rocm
       args:
-        ROCM_TAG: ${ROCM_TAG:-7.2.4-complete}
-        STRATA_REF: ${STRATA_REF:-296b59d2f73c8f04a805df29c2fa97655adace78}
+        STRATA_VERSION: ${STRATA_VERSION:-0.2.10}
+        # Filled from the v0.2.10 release; change only together with the
+        # Dockerfile defaults.
+        ENGINE_SHA256: ${ENGINE_SHA256:-b57768c85db8aa47f6bd62352df561f22504420a9629c49a573749a9555c6b1d}
     restart: unless-stopped
-    # The engine releases tens of GB of page-locked RAM on SIGTERM, which takes
-    # longer than Docker's default 10 s.
-    stop_grace_period: 60s
+    # The engine unloads the model and releases tens of GB of page-locked RAM
+    # on SIGTERM, which takes longer than Docker's default 10 s.
+    stop_grace_period: 2m
     devices:
       - /dev/kfd
       - /dev/dri
@@ -23,37 +30,40 @@ services:
       - "${VIDEO_GID:-985}"
       - "${RENDER_GID:-989}"
     ipc: host
+    shm_size: 2gb
     ulimits:
       memlock:
         soft: -1
         hard: -1
     # Backstop above Strata's resident footprint: IQ3_XXS keeps ~31 GB of
-    # experts in RAM (the card holds the rest) + ~2.2 GB of k8v4 KV at 200K +
-    # runtime. It keeps a runaway Strata from taking Jellyfin down with it.
-    mem_limit: 38g
+    # experts in RAM (the card holds the rest) + ~1.4 GB of k8v4 KV at 128K +
+    # two request slots + runtime. It keeps a runaway Strata from taking
+    # Jellyfin down with it.
+    mem_limit: 40g
     # Half the default weight: Jellyfin wins when the CPU is contended.
     cpu_shares: 512
-    # The image's healthcheck probes :8080, which does not answer until the
-    # first start has downloaded the model (~58 GB, about an hour). Traefik
-    # skips containers that are "starting" or "unhealthy", so the route would
-    # not exist during that first download. The server's own GET /health is
-    # still there for clients and monitoring.
-    healthcheck:
-      disable: true
     environment:
       API_KEY: ${API_KEY:?set API_KEY}
       FAMILY: ${FAMILY:-qwen}
       MODEL: ${MODEL:-IQ3_XXS}
       KV: ${KV:-k8v4}
-      KV_STREAMING: ${KV_STREAMING:-on}
-      CONTEXT: ${CONTEXT:-204800}
-      LOW_RAM: ${LOW_RAM:-resident}
-      IDLE_UNLOAD_S: ${IDLE_UNLOAD_S:-1800}
-      LAZY_LOAD: ${LAZY_LOAD:-true}
-      VRAM_RESERVE_MIB: ${VRAM_RESERVE_MIB:-3072}
+      CONTEXT: ${CONTEXT:-131072}
+      # Two batch slots: an agent and one helper (or two helpers) decode
+      # together instead of queueing behind one another. On this card the
+      # experts mostly live in RAM, so a second slot costs some single-request
+      # speed; the latency of a subagent fan-out is what it buys.
+      PARALLEL: ${PARALLEL:-2}
+      VISION: ${VISION:-off}
+      TUNE: ${TUNE:-skip}
+      # 3 GB left for Jellyfin's VAAPI transcodes; MTP drafts in both batch
+      # slots (the solo path already uses the MTP). The entrypoint reads this
+      # space-separated list; leading `--` options become engine args.
+      STRATA_SET: ${STRATA_SET:---vram-reserve-mib=3072 --batch-mtp=1}
     volumes:
-      # Model files, MTP layer and config (~70 GB). An NVMe directory that does
-      # not hold Jellyfin's media or transcode directory.
+      # Model files, MTP layer and config (~119 GB from the old layout; the
+      # 0.2.x entrypoint moves /data/{models,packs,mtp} into /data/Strata-data
+      # on first start, without copying). An NVMe directory that does not hold
+      # Jellyfin's media or transcode directory.
       - ${STRATA_DATA_PATH:-/home/ash/strata}:/data
     expose:
       - "8080"

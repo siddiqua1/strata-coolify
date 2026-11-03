@@ -2,7 +2,8 @@
 
 Paste the block below, then compile the answer and feed any `rustc` errors back
 until it builds. Measured on this deployment (RX 7900 XT, `IQ3_XXS`, 200K
-context, the defaults in `strata-wrapper.sh`):
+context, the 0.1.44.1 sampling defaults; the 0.2.10 deployment keeps
+those defaults at 128K):
 
 | Workflow | Compiled | Tests passed |
 | --- | --- | --- |
