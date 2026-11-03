@@ -86,7 +86,9 @@ needs to. Two in flight is the useful shape here; a wider fan-out is not.
    package (~286 MB) and the Terminal's Python; no engine compile. On the first
    start the 0.2.x entrypoint moves the old `/data/models`, `/data/packs` and
    `/data/mtp` into `/data/Strata-data` with a rename inside the volume — no
-   copy, no model download. It then writes the installed config and starts.
+   copy, no model download. It verifies the model files, downloads the 1.2 GB
+   DFlash2 drafter once (the MTP is used because two slots are configured),
+   writes the installed config and starts.
 5. **Tune the server config once** after the first start (see below) and
    restart. This is what sets the sampling defaults, the thinking cap, the idle
    unload and `lazy_load`.
@@ -186,10 +188,10 @@ bounds; the deployment does not turn the box into a parallel inference farm.
   locked RAM on SIGTERM; `stop_grace_period` is 2 minutes. The image's
   healthcheck stays green while the model is idle-unloaded (it lists the model
   even when unloaded), so Traefik keeps the route.
-- **Change model settings**: set `REINSTALL` is no longer used. Change
-  `CONTEXT`, `KV`, `PARALLEL` or `STRATA_SET` in Coolify and redeploy/restart.
-  A context or picture change makes setup write the installed config again; the
-  tuning keys are preserved.
+- **Change model settings**: change `CONTEXT`, `KV`, `PARALLEL` or
+  `STRATA_SET` in Coolify and redeploy/restart. The old `REINSTALL` variable is
+  no longer read. A context or picture change makes setup write the installed
+  config again; the tuning keys are preserved.
 - **Upgrade Strata**: change `STRATA_VERSION` and the engine package SHA-256
   (or switch to the official image once the tag exists). A new engine may make
   an old tuning result less useful; re-run `scripts/tune-strata.sh` if the
@@ -219,7 +221,7 @@ bounds; the deployment does not turn the box into a parallel inference farm.
   [prompts/rust-lru-decorator.md](prompts/rust-lru-decorator.md); subagents that
   write code should be given the same retry budget.
 - **Quant:** IQ3_XXS is kept. With two slots and the full resident copy it
-  reaches ~49 tok/s aggregate, which is enough for a two-helper DSH tree; a
+  reaches ~47 tok/s aggregate, which is enough for a two-helper DSH tree; a
   2-bit set (IQ2_XS) would free several GB for a third slot or a conversation
   cache, but it measured 1 of 5 on the macro task against 2 of 10 for IQ3_XXS.
   That is the wrong trade for coding subagents unless a wider fan-out matters
@@ -230,29 +232,31 @@ bounds; the deployment does not turn the box into a parallel inference farm.
 Measured on the 0.2.10 image and the old IQ3_XXS volume, 128K context, two
 slots, `--batch-mtp=1`.
 
-- Image build: about 4–6 minutes with a warm Docker cache (Terminal source,
-  286 MB engine package, Terminal Python and wheels; no compile).
+- Image build: about 2–3 minutes with a warm Docker cache (the deploy ran in
+  about 2.5 minutes); a cold build also downloads the 32 MB source, 286 MB
+  engine package, Terminal Python and wheels. No compile.
 - First 0.2.x start on the old volume: about 2 minutes. The entrypoint moved
   `models/`, `packs/` and `mtp/` into `/data/Strata-data` by rename, verified
   the existing files, downloaded the 1.2 GB DFlash2 drafter once, then started
   with the MTP because two slots are configured. No model download.
-- Model load: 16.4–16.7 s, with the full resident complement (33.6–34.4 GiB).
-- Memory: 35.8 GiB in Docker against the 40 GiB limit; 17.4 GiB of 20.4 GiB
-  VRAM used, so the 3072 MiB reserve for Jellyfin is honoured. Host
-  `MemAvailable` is about 0.7–1.3 GiB while the model is fully resident. This is
-  the same tight margin the 0.1.44.1 deployment ran with; the host also runs
+- Model load: 16.7 s.
+- Memory: 32.5 GiB in Docker against the 40 GiB limit; the engine keeps
+  31.04 GiB of experts in RAM and the rest through the file tier. 17.4 GiB of
+  20.4 GiB VRAM used, so the 3072 MiB reserve for Jellyfin is honoured. Host
+  `MemAvailable` is about 3.9–4.1 GiB while the model is loaded. This is the
+  same tight margin the 0.1.44.1 deployment ran with; the host also runs
   Jellyfin and Coolify.
-- Single request (256-token cap): 47.3 tok/s.
-- Two concurrent requests, full resident: 49.3 tok/s aggregate (25.7 and 36.4
-  tok/s per request) — two streams cost almost nothing in total throughput.
-  When the host is too full for the full resident copy (the engine keeps
-  ~23 GiB and reads the rest through the file tier), the two-stream aggregate
-  is ~34 tok/s. One `/unload` + `/load` after a deploy lets the engine take the
-  full resident copy once the file cache has been released.
+- Single request (256-token cap): 39.9 tok/s; a tool-call turn after the
+  prompt cache warmed ran at 43.4 tok/s.
+- Two concurrent requests: 46.8 tok/s aggregate (26.9 and 31.8 tok/s per
+  request) over 5.7 s. Two streams cost almost nothing in total throughput.
+  A fully resident run (after `/unload` + `/load`, when the host has released
+  the file cache) measured 47.3 tok/s single and 49.3 aggregate; this host
+  usually settles at the 31 GiB copy above.
 - Concurrent tool calls: two calculator requests both returned a proper
-  `tool_calls` response; one call after tuning finished in 4.2 s.
-- Restart with the model unloaded (`lazy_load`): health answers in about 15–20
-  s; the first request loads in ~16 s.
+  `tool_calls` response (about 9 s each with the tuned thinking budget).
+- Restart with the model unloaded (`lazy_load`): the container is healthy in
+  about 20 s; `/v1/load` takes 16.7 s.
 - Conversation cache: **off** on this host. After the model is loaded there is
   not enough free RAM to park conversations (`/metrics` shows
   `"enabled": false, "budget_mib": 0`). The two batch slots keep their active
